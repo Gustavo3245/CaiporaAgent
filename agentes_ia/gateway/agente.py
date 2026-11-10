@@ -35,6 +35,7 @@ from ..mqtt import (
 )
 from ..politicas import Decisao, MotorPoliticas
 from .atuadores import AtuadorLinux, ResultadoAtuacao
+from .auditoria_db import AuditoriaSQLite
 from .metricas_so import coletar_metricas_sistema
 from .transporte import TransporteMQTT
 
@@ -55,6 +56,7 @@ class AgenteBordaGateway:
         dry_run: bool = False,
         cooldown_s: float = 10.0,
         arquivo_auditoria: str | None = None,
+        banco_auditoria: str | AuditoriaSQLite | None = None,
     ) -> None:
         self.tenant_id = tenant_id
         self.site_id = site_id
@@ -65,6 +67,10 @@ class AgenteBordaGateway:
         self.dry_run = dry_run
         self.cooldown_ms = cooldown_s * 1000.0
         self.arquivo_auditoria = arquivo_auditoria
+        if isinstance(banco_auditoria, str):
+            self.db: AuditoriaSQLite | None = AuditoriaSQLite(banco_auditoria)
+        else:
+            self.db = banco_auditoria
 
         # Atuador do SO para mitigações na própria borda
         self.atuador_local = AtuadorLinux(dry_run=dry_run)
@@ -109,8 +115,13 @@ class AgenteBordaGateway:
         return True
 
     def _registrar_auditoria(self, registro: dict[str, Any]) -> None:
-        """Registra a ação em memória e em arquivo append-only."""
+        """Registra a ação em memória, em arquivo e no banco SQLite local."""
         self.historico_acoes.append(registro)
+        if self.db:
+            try:
+                self.db.registrar(registro)
+            except Exception as e:
+                logger.error(f"Erro ao salvar auditoria no SQLite: {e}")
         if self.arquivo_auditoria:
             try:
                 with open(self.arquivo_auditoria, "a", encoding="utf-8") as f:

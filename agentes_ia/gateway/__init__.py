@@ -10,6 +10,7 @@ from .transporte import (
 )
 from .agente import AgenteBordaGateway
 from .dispositivo_campo import DispositivoCampoIoT
+from .auditoria_db import AuditoriaSQLite
 
 __all__ = [
     "coletar_metricas_sistema",
@@ -23,4 +24,5 @@ __all__ = [
     "topico_corresponde",
     "AgenteBordaGateway",
     "DispositivoCampoIoT",
+    "AuditoriaSQLite",
 ]

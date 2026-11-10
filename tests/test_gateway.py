@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from agentes_ia.config import carregar_politicas
 from agentes_ia.gateway import (
     AgenteBordaGateway,
+    AuditoriaSQLite,
     DispositivoCampoIoT,
     ResultadoAtuacao,
     TransporteMemoria,
@@ -107,6 +108,40 @@ class TestLoopFechadoGateway(unittest.TestCase):
         acoes = [a for a in self.gateway.historico_acoes if a.get("acao") == "reset_sensor"]
         self.assertTrue(len(acoes) > 0)
         self.assertTrue(acoes[0]["executada"])
+
+
+class TestAuditoriaSQLite(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        self.tmp_dir = tempfile.TemporaryDirectory()
+        self.db_path = f"{self.tmp_dir.name}/teste_auditoria.db"
+        self.db = AuditoriaSQLite(self.db_path)
+
+    def tearDown(self):
+        self.tmp_dir.cleanup()
+
+    def test_registro_e_consulta_pendentes(self):
+        reg = {
+            "alvo": "dev1",
+            "acao": "reset_sensor",
+            "falha": "sensor_failure",
+            "decisao": "permitir",
+            "executada": True,
+        }
+        id_inserido = self.db.registrar(reg)
+        self.assertGreater(id_inserido, 0)
+        self.assertEqual(self.db.contar_total(), 1)
+        self.assertEqual(self.db.contar_pendentes(), 1)
+
+        pendentes = self.db.obter_pendentes_sincronizacao()
+        self.assertEqual(len(pendentes), 1)
+        self.assertEqual(pendentes[0]["alvo"], "dev1")
+        self.assertEqual(pendentes[0]["sincronizado"], 0)
+
+        # Marca como sincronizado (simula envio para nuvem)
+        self.db.marcar_como_sincronizado([id_inserido])
+        self.assertEqual(self.db.contar_pendentes(), 0)
+        self.assertEqual(len(self.db.obter_pendentes_sincronizacao()), 0)
 
 
 if __name__ == "__main__":
