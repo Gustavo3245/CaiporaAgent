@@ -135,3 +135,4 @@ class AuditoriaSQLite:
         with self._lock, self._obter_conexao() as conn:
             cursor = conn.execute("SELECT COUNT(*) FROM auditoria WHERE sincronizado = 0;")
             return int(cursor.fetchone()[0])
+

@@ -52,3 +52,4 @@ const char* DEVICE_ID     = "esp32-sensor-01";
 2. **Online State:** Publica `status=online` assim que o handshake MQTT é concluído.
 3. **Telemetria:** Publica métricas periodicamente em `.../telemetry` com UUID e contador `sequence`.
 4. **Comandos:** Assina `.../command`. Ao receber `reset_sensor`, pulsa o GPIO 4 e publica a confirmação com `command_id` correspondente em `.../command-result`.
+

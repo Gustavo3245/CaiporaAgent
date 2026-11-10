@@ -120,3 +120,4 @@ sqlite3 resultados/auditoria.db "SELECT timestamp, alvo, falha, acao, decisao, s
 ```
 
 Quando a conexão com a nuvem é restabelecida, os registros com `sincronizado = 0` podem ser transmitidos em lote para o Coordenador Central através do método `obter_pendentes_sincronizacao()`.
+

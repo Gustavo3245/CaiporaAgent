@@ -31,3 +31,4 @@ echo "Comandos úteis:"
 echo " - Verificar status: sudo systemctl status $SERVICO"
 echo " - Visualizar logs:   sudo journalctl -u $SERVICO -f"
 echo " - Parar serviço:     sudo systemctl stop $SERVICO"
+
