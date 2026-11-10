@@ -9,14 +9,7 @@ from .transporte import (
     topico_corresponde,
 )
 from .agente import AgenteBordaGateway
-from .atuadores import executar_acao_local, AtuadorLinux, ResultadoAtuacao
-from .transporte import (
-    TransporteMQTT,
-    TransporteMemoria,
-    TransportePaho,
-    topico_corresponde,
-)
-from .agente import AgenteBordaGateway
+from .dispositivo_campo import DispositivoCampoIoT
 
 __all__ = [
     "coletar_metricas_sistema",
@@ -29,12 +22,5 @@ __all__ = [
     "TransportePaho",
     "topico_corresponde",
     "AgenteBordaGateway",
-    "executar_acao_local",
-    "AtuadorLinux",
-    "ResultadoAtuacao",
-    "TransporteMQTT",
-    "TransporteMemoria",
-    "TransportePaho",
-    "topico_corresponde",
-    "AgenteBordaGateway",
+    "DispositivoCampoIoT",
 ]

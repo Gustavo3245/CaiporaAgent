@@ -165,7 +165,7 @@ class AgenteBordaGateway:
             "device_id": msg.device_id,
             "command_id": msg.command_id,
             "status": msg.status.value,
-            "resultado": msg.result,
+            "resultado": msg.resultado,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         self._registrar_auditoria(reg)
