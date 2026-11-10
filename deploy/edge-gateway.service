@@ -1,0 +1,31 @@
+[Unit]
+Description=IoT Edge Gateway Autonomous Agent Daemon
+Documentation=https://github.com/gustavo3245/prototipo_agentes_iot
+After=network.target mosquitto.service
+Wants=mosquitto.service
+
+[Service]
+Type=simple
+# Executado como root para permitir leitura de métricas (/proc, /sys) e ações locais de sistema
+User=root
+Group=root
+
+# Ajuste para o caminho onde o repositório foi clonado no nó de borda
+WorkingDirectory=/opt/prototipo_agentes_iot/prototipo
+Environment=PYTHONPATH=/opt/prototipo_agentes_iot/prototipo
+Environment=PYTHONUNBUFFERED=1
+
+# Comando de inicialização do daemon do Gateway
+ExecStart=/usr/bin/python3 -m agentes_ia.gateway.cli --modo gateway --tenant acme --site fabrica-01 --device-id edge1
+
+# Política de reinicialização em caso de falha
+Restart=always
+RestartSec=5s
+
+# Logs enviados para o journal do sistema (visualizável com journalctl -u edge-gateway -f)
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=edge-gateway
+
+[Install]
+WantedBy=multi-user.target
