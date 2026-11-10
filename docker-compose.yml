@@ -1,9 +1,19 @@
 services:
+  mosquitto:
+    image: eclipse-mosquitto:2.0
+    container_name: edge-mosquitto
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+
   prototipo:
     build: .
     command: ["python", "-m", "agentes_ia.demo", "--servir", "--tempo-real", "--falhas", "20", "--auditoria", "resultados/auditoria.jsonl"]
     ports: ["8000:8000"]
     volumes: ["./resultados:/app/resultados"]
+
   prometheus:
     image: prom/prometheus:latest
     volumes: ["./prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
