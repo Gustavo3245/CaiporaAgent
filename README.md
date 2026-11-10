@@ -4,7 +4,22 @@ Etapa 6 (*Desenvolvimento da Solução*) do artigo da disciplina Tópicos em Sis
 Implementa os agentes **IoT Device**, **Edge Node** e **Cloud Coordinator**, o módulo de **policy enforcement**
 (políticas declarativas em JSON), a **injeção controlada de falhas** e os experimentos das questões de pesquisa RQ1–RQ4.
 
-## Como executar (Python ≥ 3.10, só biblioteca padrão)
+## Execução em Dispositivos Físicos e Edge Gateway Real
+
+O pacote [`agentes_ia/gateway`](agentes_ia/gateway/) implementa o **Edge Gateway Daemon** para execução em hardware físico (ex.: Raspberry Pi, mini-PCs Linux e microcontroladores ESP32):
+
+```bash
+python -m agentes_ia.gateway.cli --modo demo           # demonstração interativa em malha fechada
+python -m agentes_ia.gateway.cli --modo gateway        # inicia o gateway conectado ao Mosquitto
+python -m agentes_ia.gateway.cli --modo dispositivo    # emula um dispositivo de campo (ESP32)
+```
+
+- **Guia completo de implantação física:** [`docs/guia_hardware_real.md`](docs/guia_hardware_real.md)
+- **Firmware C++ para ESP32:** [`firmware_esp32/firmware_esp32.ino`](firmware_esp32/firmware_esp32.ino)
+- **Serviço de Inicialização Linux (systemd):** [`deploy/edge-gateway.service`](deploy/edge-gateway.service)
+- **Banco de Auditoria e Buffer Offline:** [`agentes_ia/gateway/auditoria_db.py`](agentes_ia/gateway/auditoria_db.py) (SQLite)
+
+## Como executar a simulação (Python ≥ 3.10, só biblioteca padrão)
 
 ```bash
 python -m agentes_ia.demo                       # demonstração com log legível (diagnóstico na borda)
