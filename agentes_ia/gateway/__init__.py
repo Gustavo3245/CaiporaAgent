@@ -2,6 +2,21 @@
 
 from .metricas_so import coletar_metricas_sistema, ColetorMetricasLinux
 from .atuadores import executar_acao_local, AtuadorLinux, ResultadoAtuacao
+from .transporte import (
+    TransporteMQTT,
+    TransporteMemoria,
+    TransportePaho,
+    topico_corresponde,
+)
+from .agente import AgenteBordaGateway
+from .atuadores import executar_acao_local, AtuadorLinux, ResultadoAtuacao
+from .transporte import (
+    TransporteMQTT,
+    TransporteMemoria,
+    TransportePaho,
+    topico_corresponde,
+)
+from .agente import AgenteBordaGateway
 
 __all__ = [
     "coletar_metricas_sistema",
@@ -9,4 +24,17 @@ __all__ = [
     "executar_acao_local",
     "AtuadorLinux",
     "ResultadoAtuacao",
+    "TransporteMQTT",
+    "TransporteMemoria",
+    "TransportePaho",
+    "topico_corresponde",
+    "AgenteBordaGateway",
+    "executar_acao_local",
+    "AtuadorLinux",
+    "ResultadoAtuacao",
+    "TransporteMQTT",
+    "TransporteMemoria",
+    "TransportePaho",
+    "topico_corresponde",
+    "AgenteBordaGateway",
 ]
