@@ -1,0 +1,4 @@
+{"t_ms": 61400, "agente": "cloud_coordinator", "alvo": "cloud1", "falha": "cpu_saturation", "acao": "throttle_workload", "efeito": "permitir", "regra": "conforme", "motivo": "todas as verificações passaram"}
+{"t_ms": 181905, "agente": "edge_agent", "alvo": "dev1", "falha": "packet_loss", "acao": "reroute_link", "efeito": "permitir", "regra": "conforme", "motivo": "todas as verificações passaram"}
+{"t_ms": 209905, "agente": "edge_agent", "alvo": "dev2", "falha": "memory_overflow", "acao": "reboot_all", "efeito": "negar", "regra": "acao_proibida", "motivo": "'reboot_all' é proibida"}
+{"t_ms": 301905, "agente": "edge_agent", "alvo": "dev2", "falha": "cpu_saturation", "acao": "throttle_workload", "efeito": "permitir", "regra": "conforme", "motivo": "todas as verificações passaram"}

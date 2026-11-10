@@ -1,0 +1,11 @@
+services:
+  prototipo:
+    build: .
+    command: ["python", "-m", "agentes_ia.demo", "--servir", "--tempo-real", "--falhas", "20", "--auditoria", "resultados/auditoria.jsonl"]
+    ports: ["8000:8000"]
+    volumes: ["./resultados:/app/resultados"]
+  prometheus:
+    image: prom/prometheus:latest
+    volumes: ["./prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
+    ports: ["9090:9090"]
+    depends_on: [prototipo]

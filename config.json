@@ -1,0 +1,29 @@
+{
+  "modo": "borda",
+  "politicas_ativas": true,
+  "simulacao": {
+    "tick_ms": 1000,
+    "n_dispositivos": 4,
+    "n_falhas": 20,
+    "inicio_falhas_s": 60,
+    "intervalo_entre_falhas_s": 120,
+    "duracao_falha_max_s": 90,
+    "camadas_alvo": ["iot", "borda", "nuvem"],
+    "seed": 42
+  },
+  "deteccao": {"janela": 30, "aquecimento": 10, "limiar_z": 4.0, "confirmacoes": 2},
+  "agentes": {
+    "cooldown_s": 10,
+    "latencia_llm_borda_ms": 900,
+    "latencia_llm_nuvem_ms": 400,
+    "taxa_alucinacao": 0.1,
+    "tempo_execucao_acao_ms": 500,
+    "atraso_aprovacao_humana_ms": 30000,
+    "taxa_aprovacao_humana": 1.0,
+    "diagnosticador": "llm_simulado"
+  },
+  "rede": {
+    "iot_borda": {"latencia_ms": 5, "perda": 0.0, "retentativas": 2, "timeout_ms": 500, "quedas": []},
+    "borda_nuvem": {"latencia_ms": 80, "perda": 0.01, "retentativas": 3, "timeout_ms": 1500, "quedas": []}
+  }
+}
