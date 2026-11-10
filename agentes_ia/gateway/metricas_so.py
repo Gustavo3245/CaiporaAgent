@@ -23,7 +23,6 @@ class ColetorMetricasLinux:
 
     def __init__(self) -> None:
         self._ultima_amostra_cpu: AmostraCPU | None = None
-        # Faz uma primeira leitura da CPU para inicializar o contador de deltas
         self._ler_ticks_cpu()
 
     def _ler_ticks_cpu(self) -> tuple[int, int] | None:
@@ -37,14 +36,15 @@ class ColetorMetricasLinux:
             return None
 
         try:
-            with open(caminho, "r", encoding="utf-8") as f:
-                linha = f.readline()
+            with open(caminho, "r", encoding="utf-8") as file:
+                linha = file.readline()
                 if not linha.startswith("cpu "):
                     return None
                 partes = [int(v) for v in linha.split()[1:]]
-                idle = partes[3] + partes[4]  # idle + iowait
+                idle = partes[3] + partes[4]
                 total = sum(partes)
                 return total, idle
+                
         except Exception:
             return None
 
