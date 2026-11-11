@@ -13,6 +13,7 @@ from .broker_mqtt import BrokerMQTTLocal
 from .agente import AgenteBordaGateway
 from .dispositivo_campo import DispositivoCampoIoT
 from .auditoria_db import AuditoriaSQLite
+from .nuvem import CoordenadorNuvemServidor
 
 __all__ = [
     "coletar_metricas_sistema",
@@ -29,4 +30,5 @@ __all__ = [
     "AgenteBordaGateway",
     "DispositivoCampoIoT",
     "AuditoriaSQLite",
+    "CoordenadorNuvemServidor",
 ]

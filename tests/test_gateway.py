@@ -9,6 +9,7 @@ from agentes_ia.gateway import (
     AgenteBordaGateway,
     AuditoriaSQLite,
     BrokerMQTTLocal,
+    CoordenadorNuvemServidor,
     DispositivoCampoIoT,
     ResultadoAtuacao,
     TransporteMemoria,
@@ -208,6 +209,110 @@ class TestBrokerTCPeLWT(unittest.TestCase):
             time.sleep(0.02)
 
         self.assertEqual(self.broker.lwt_disparados, 1)
+
+
+class TestNuvemSyncEAprovacao(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        self.tmp_dir = tempfile.TemporaryDirectory()
+        self.db_path = f"{self.tmp_dir.name}/gw.db"
+        self.transporte = TransporteMemoria()
+        self.motor = MotorPoliticas(carregar_politicas(), ativo=True)
+
+    def tearDown(self):
+        self.tmp_dir.cleanup()
+
+    def test_buffer_offline_e_sync_com_nuvem(self):
+        gw = AgenteBordaGateway(
+            tenant_id="acme",
+            site_id="fabrica-01",
+            gateway_id="edge1",
+            transporte=self.transporte,
+            motor_politicas=self.motor,
+            dry_run=True,
+            cooldown_s=0.1,
+            banco_auditoria=self.db_path,
+        )
+        gw.iniciar()
+        dev = DispositivoCampoIoT("acme", "fabrica-01", "dev1", self.transporte)
+        dev.iniciar()
+
+        # Nuvem offline: simulando porta fechada
+        for _ in range(12):
+            dev.enviar_telemetria()
+        dev.injetar_falha("sensor_failure")
+        for _ in range(3):
+            dev.enviar_telemetria()
+
+        # Dispositivo foi curado localmente mesmo sem nuvem
+        self.assertIsNone(dev.falha_ativa)
+        pendentes_antes = gw.db.contar_pendentes()
+        self.assertGreater(pendentes_antes, 0)
+
+        # Sobe Coordenador Nuvem e sincroniza
+        nuvem = CoordenadorNuvemServidor(host="127.0.0.1", port=0)
+        porta_nuvem = nuvem.iniciar()
+        try:
+            url = f"http://127.0.0.1:{porta_nuvem}"
+            # Tentativa enquanto nuvem estava offline falharia; agora com nuvem no ar sincroniza tudo
+            res = gw.sincronizar_com_nuvem(url)
+            self.assertTrue(res["conectado"])
+            self.assertEqual(res["enviados"], pendentes_antes)
+            self.assertEqual(gw.db.contar_pendentes(), 0)
+            self.assertEqual(nuvem.resumo_status()["total_registros"], pendentes_antes)
+        finally:
+            nuvem.parar()
+
+    def test_aprovacao_humana_via_nuvem(self):
+        class DiagRestart:
+            def diagnosticar(self, no, anomalias, agente=None):
+                from agentes_ia.diagnostico import Diagnostico
+                ev = [{"no": no, "metrica": a["metrica"], "valor": a["valor"], "z": a["z"]} for a in anomalias]
+                return Diagnostico(no, "sensor_failure", no, "dispositivo", ev, 0.9, "restart_device")
+
+        gw = AgenteBordaGateway(
+            tenant_id="acme",
+            site_id="fabrica-01",
+            gateway_id="edge1",
+            transporte=self.transporte,
+            motor_politicas=self.motor,
+            diagnosticador=DiagRestart(),
+            dry_run=True,
+            cooldown_s=0.1,
+            banco_auditoria=self.db_path,
+        )
+        gw.iniciar()
+        dev = DispositivoCampoIoT("acme", "fabrica-01", "dev1", self.transporte)
+        dev.iniciar()
+        boot_original = dev.boot_id
+
+        for _ in range(12):
+            dev.enviar_telemetria()
+        dev.injetar_falha("sensor_failure")
+        for _ in range(3):
+            dev.enviar_telemetria()
+
+        # Deve estar suspenso aguardando aprovação humana
+        self.assertEqual(len(gw.aprovacoes_pendentes), 1)
+        self.assertEqual(len(dev.comandos_recebidos), 0)
+
+        nuvem = CoordenadorNuvemServidor(host="127.0.0.1", port=0)
+        porta_nuvem = nuvem.iniciar()
+        try:
+            url = f"http://127.0.0.1:{porta_nuvem}"
+            gw.sincronizar_com_nuvem(url)
+            self.assertEqual(nuvem.resumo_status()["aprovacoes_pendentes"], 1)
+
+            app_id = next(iter(nuvem.aprovacoes_pendentes))
+            self.assertTrue(nuvem.submeter_decisao_operador(app_id, True))
+
+            # Próxima sync puxa aprovação e executa restart_device no dev1
+            gw.sincronizar_com_nuvem(url)
+            self.assertEqual(len(gw.aprovacoes_pendentes), 0)
+            self.assertEqual([c.acao for c in dev.comandos_recebidos], ["restart_device"])
+            self.assertNotEqual(dev.boot_id, boot_original)
+        finally:
+            nuvem.parar()
 
 
 if __name__ == "__main__":

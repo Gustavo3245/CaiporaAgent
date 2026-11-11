@@ -4,22 +4,24 @@ Integração dos componentes do Gateway de Borda:
  1. Transporte MQTT (recebe telemetrias de campo e envia comandos).
  2. Ingestão e validação estrita de contrato (codec.py).
  3. Detecção leve de anomalias (DetectorZ) por dispositivo e local.
- 4. Diagnóstico de causa-raiz (regras causais ou LLM local via Ollama).
+ 4. Diagnóstico de causa-raiz (regras causais, LLM simulado ou Ollama).
  5. Motor de políticas e guardrails de segurança (politicas.py).
  6. Atuador de sistema operacional (atuadores.py) para mitigações locais.
+ 7. Auditoria persistente em SQLite e sincronização assíncrona com a Nuvem.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
+import urllib.error
+import urllib.request
 import uuid
-from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, Mapping
+from typing import Any
 
-from ..catalogo import ACAO_POR_FALHA, camada_de
 from ..deteccao import DetectorZ
 from ..diagnostico import Diagnostico, DiagnosticadorRegras
 from ..mqtt import (
@@ -27,7 +29,6 @@ from ..mqtt import (
     ErroMensagem,
     MensagemComando,
     MensagemEstado,
-    MensagemMQTT,
     MensagemResultadoComando,
     MensagemTelemetria,
     TipoMensagem,
@@ -36,7 +37,7 @@ from ..mqtt import (
 from ..politicas import Decisao, MotorPoliticas
 from .atuadores import AtuadorLinux, ResultadoAtuacao
 from .auditoria_db import AuditoriaSQLite
-from .metricas_so import coletar_metricas_sistema
+from .metricas_so import ColetorMetricasLinux
 from .transporte import TransporteMQTT
 
 logger = logging.getLogger("agente_borda")
@@ -72,33 +73,35 @@ class AgenteBordaGateway:
         else:
             self.db = banco_auditoria
 
-        # Atuador do SO para mitigações na própria borda
+        self._lock = threading.RLock()
+        self._coletor_so = ColetorMetricasLinux()
         self.atuador_local = AtuadorLinux(dry_run=dry_run)
 
-        # Detectores de anomalias: um por nó monitorado (dispositivos de campo + borda)
         self.detectores: dict[str, DetectorZ] = {}
-        # Observações recentes para verificação de integridade das políticas: (no, metrica) -> (valor, t_ms)
         self.observado: dict[tuple[str, str], tuple[float, float]] = {}
-        # Controle de cooldown por nó: no -> ultimo_diagnostico_ms
         self.ultimos_diagnosticos: dict[str, float] = {}
+        self.estado_dispositivos: dict[str, str] = {}
+        self.aprovacoes_pendentes: dict[str, tuple[Diagnostico, dict[str, Any]]] = {}
 
-        # Log em memória de auditoria e ações
         self.historico_acoes: list[dict[str, Any]] = []
+        self._cursor_sync_memoria = 0
+        self._seq_comandos = 0
 
     def _obter_detector(self, no: str) -> DetectorZ:
         """Obtém ou instancia um DetectorZ dedicado para o dispositivo."""
-        if no not in self.detectores:
-            self.detectores[no] = DetectorZ(
-                janela=30, aquecimento=10, limiar_z=4.0, confirmacoes=2
-            )
-        return self.detectores[no]
+        with self._lock:
+            if no not in self.detectores:
+                self.detectores[no] = DetectorZ(
+                    janela=30, aquecimento=10, limiar_z=4.0, confirmacoes=2
+                )
+            return self.detectores[no]
 
     def iniciar(self) -> None:
         """Conecta ao transporte e assina os tópicos do site."""
-        self.transporte.conectar()
         self.transporte.registrar_callback(self._ao_receber_mensagem)
+        if not self.transporte.esta_conectado():
+            self.transporte.conectar()
 
-        # Assina todos os eventos e telemetrias de dispositivos pertencentes a este site
         filtro_site = EnderecoMQTT.assinatura_site(self.tenant_id, self.site_id)
         self.transporte.assinar(filtro_site, qos=1)
 
@@ -108,26 +111,28 @@ class AgenteBordaGateway:
 
     def _cooldown_liberado(self, no: str, agora_ms: float) -> bool:
         """Evita flapping garantindo um intervalo mínimo entre diagnósticos do mesmo nó."""
-        ultimo = self.ultimos_diagnosticos.get(no, -10**12)
-        if agora_ms - ultimo < self.cooldown_ms:
-            return False
-        self.ultimos_diagnosticos[no] = agora_ms
-        return True
+        with self._lock:
+            ultimo = self.ultimos_diagnosticos.get(no, -10**12)
+            if agora_ms - ultimo < self.cooldown_ms:
+                return False
+            self.ultimos_diagnosticos[no] = agora_ms
+            return True
 
     def _registrar_auditoria(self, registro: dict[str, Any]) -> None:
         """Registra a ação em memória, em arquivo e no banco SQLite local."""
-        self.historico_acoes.append(registro)
-        if self.db:
-            try:
-                self.db.registrar(registro)
-            except Exception as e:
-                logger.error(f"Erro ao salvar auditoria no SQLite: {e}")
-        if self.arquivo_auditoria:
-            try:
-                with open(self.arquivo_auditoria, "a", encoding="utf-8") as f:
-                    f.write(json.dumps(registro, ensure_ascii=False) + "\n")
-            except Exception as e:
-                logger.error(f"Erro ao salvar auditoria: {e}")
+        with self._lock:
+            self.historico_acoes.append(registro)
+            if self.db:
+                try:
+                    self.db.registrar(registro)
+                except Exception as e:
+                    logger.error(f"Erro ao salvar auditoria no SQLite: {e}")
+            if self.arquivo_auditoria:
+                try:
+                    with open(self.arquivo_auditoria, "a", encoding="utf-8") as f:
+                        f.write(json.dumps(registro, ensure_ascii=False) + "\n")
+                except Exception as e:
+                    logger.error(f"Erro ao salvar auditoria: {e}")
 
     # -------------------------------------------------------------------------
     # Recepção de Mensagens MQTT
@@ -138,7 +143,6 @@ class AgenteBordaGateway:
         try:
             _, mensagem = decodificar_publicacao(topico, payload_bytes)
         except ErroMensagem as e:
-            # Mensagens fora do contrato de segurança v1.0 são rejeitadas imediatamente
             logger.warning(f"Mensagem rejeitada no tópico {topico}: {e}")
             return
 
@@ -156,13 +160,12 @@ class AgenteBordaGateway:
         dispositivo_id = msg.device_id
         leituras = {m.nome: m.valor for m in msg.metricas}
 
-        # Atualiza a janela de telemetria observada (usada pelo motor de políticas)
-        for nome_metrica, valor in leituras.items():
-            self.observado[(dispositivo_id, nome_metrica)] = (valor, agora_ms)
+        with self._lock:
+            for nome_metrica, valor in leituras.items():
+                self.observado[(dispositivo_id, nome_metrica)] = (valor, agora_ms)
 
-        # Executa o DetectorZ em O(1)
-        detector = self._obter_detector(dispositivo_id)
-        anomalias = detector.atualizar(leituras)
+            detector = self._obter_detector(dispositivo_id)
+            anomalias = detector.atualizar(leituras)
 
         if anomalias:
             logger.info(f"Anomalia confirmada em {dispositivo_id}: {anomalias}")
@@ -174,57 +177,78 @@ class AgenteBordaGateway:
         reg = {
             "tipo": "resultado_comando",
             "device_id": msg.device_id,
+            "alvo": msg.device_id,
             "command_id": msg.command_id,
             "status": msg.status.value,
             "resultado": msg.resultado,
+            "executada": msg.status.value == "succeeded",
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         self._registrar_auditoria(reg)
 
     def _processar_estado(self, msg: MensagemEstado) -> None:
         """Acompanha presença e estado do dispositivo (online/offline via LWT)."""
+        with self._lock:
+            anterior = self.estado_dispositivos.get(msg.device_id)
+            self.estado_dispositivos[msg.device_id] = msg.status.value
+
         logger.info(f"Estado do dispositivo {msg.device_id}: {msg.status.value}")
+        if anterior != msg.status.value:
+            reg = {
+                "tipo": "mudanca_estado",
+                "device_id": msg.device_id,
+                "alvo": msg.device_id,
+                "acao": f"status_{msg.status.value}",
+                "motivo": msg.motivo or "anuncio_dispositivo",
+                "decisao": "informativo",
+                "executada": True,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+            self._registrar_auditoria(reg)
 
     # -------------------------------------------------------------------------
     # Auto-Monitoramento do Próprio Gateway de Borda
     # -------------------------------------------------------------------------
 
-    def tick_auto_monitoramento(self) -> None:
-        """Chamado periodicamente para monitorar os recursos locais do Gateway."""
+    def tick_auto_monitoramento(
+        self, metricas_override: dict[str, float] | None = None
+    ) -> list[dict[str, Any]]:
+        """Monitora os recursos locais do Gateway (CPU, RAM, Temp) e reage a anomalias."""
         agora_ms = time.time() * 1000.0
         no_borda = self.gateway_id
+        metricas = dict(metricas_override) if metricas_override else self._coletor_so.coletar()
 
-        # Lê CPU, RAM e Temperatura reais do Linux
-        metricas = coletar_metricas_sistema()
-        for nome, valor in metricas.items():
-            self.observado[(no_borda, nome)] = (valor, agora_ms)
+        with self._lock:
+            for nome, valor in metricas.items():
+                self.observado[(no_borda, nome)] = (valor, agora_ms)
 
-        detector = self._obter_detector(no_borda)
-        anomalias = detector.atualizar(metricas)
+            detector = self._obter_detector(no_borda)
+            anomalias = detector.atualizar(metricas)
 
         if anomalias:
             logger.warning(f"Anomalia no próprio Gateway ({no_borda}): {anomalias}")
             if self._cooldown_liberado(no_borda, agora_ms):
                 self._diagnosticar_e_agir(no_borda, anomalias, agora_ms)
+        return anomalias
 
     # -------------------------------------------------------------------------
-    # Diagnóstico, Validação de Políticas e Ação
+    # Diagnóstico, Validação de Políticas, Aprovação Humana e Ação
     # -------------------------------------------------------------------------
 
     def _diagnosticar_e_agir(
         self, no: str, anomalias: list[dict[str, Any]], agora_ms: float
     ) -> None:
         """Gera a hipótese de causa-raiz e submete a ação aos guardrails de segurança."""
-        # 1. Diagnóstico estruturado
         diag: Diagnostico | None = self.diag.diagnosticar(no, anomalias, agente="edge_agent")
         if diag is None:
             return
 
-        # 2. Avaliação rigorosa pelo Motor de Políticas (Policy Enforcement)
-        decisao: Decisao = self.motor.avaliar("edge_agent", diag, self.observado, agora_ms)
+        with self._lock:
+            decisao: Decisao = self.motor.avaliar("edge_agent", diag, self.observado, agora_ms)
 
-        registro = {
+        registro: dict[str, Any] = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
+            "tipo": "acao_proposta",
             "no": no,
             "alvo": diag.alvo,
             "falha": diag.falha,
@@ -234,8 +258,9 @@ class AgenteBordaGateway:
             "regra": decisao.regra,
             "motivo": decisao.motivo,
         }
+        if diag.alucinacao:
+            registro["alucinacao"] = diag.alucinacao
 
-        # 3. Se negada, encerra aqui (ação insegura contida)
         if decisao.efeito == "negar":
             registro["executada"] = False
             self._registrar_auditoria(registro)
@@ -244,31 +269,58 @@ class AgenteBordaGateway:
             )
             return
 
-        # 4. Se condicional, exigiria operador humano
         if decisao.efeito == "exigir_humano":
+            approval_id = str(uuid.uuid4())
             registro["executada"] = False
             registro["pendente_humano"] = True
+            registro["approval_id"] = approval_id
+            with self._lock:
+                self.aprovacoes_pendentes[approval_id] = (diag, dict(registro))
             self._registrar_auditoria(registro)
-            logger.info(f"Ação {diag.acao} suspensa: aguardando confirmação humana.")
+            logger.info(
+                f"Ação {diag.acao} suspensa (id={approval_id}): aguardando confirmação humana."
+            )
             return
 
-        # 5. Ação aprovada: Despachar
         registro["executada"] = True
         self._despachar_acao(diag)
         self._registrar_auditoria(registro)
+
+    def resolver_aprovacao_humana(self, approval_id: str, aprovado: bool) -> bool:
+        """Processa decisão do operador humano para ação condicional pendente."""
+        with self._lock:
+            item = self.aprovacoes_pendentes.pop(approval_id, None)
+        if item is None:
+            return False
+
+        diag, orig_reg = item
+        reg = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "tipo": "aprovacao_humana",
+            "approval_id": approval_id,
+            "no": diag.no,
+            "alvo": diag.alvo,
+            "falha": diag.falha,
+            "acao": diag.acao,
+            "decisao": "aprovado_humano" if aprovado else "rejeitado_humano",
+            "regra": orig_reg.get("regra", "condicional"),
+            "executada": aprovado,
+        }
+        if aprovado:
+            self._despachar_acao(diag)
+        self._registrar_auditoria(reg)
+        return True
 
     def _despachar_acao(self, diag: Diagnostico) -> None:
         """Despacha a ação para o SO local ou via comando MQTT para dispositivo de campo."""
         alvo = diag.alvo
 
-        if alvo == self.gateway_id or alvo.startswith("edge"):
-            # Ação incide no próprio nó de borda -> invoca atuador local Linux
+        if alvo == self.gateway_id or alvo.startswith(("edge", "gw")):
             resultado: ResultadoAtuacao = self.atuador_local.executar(diag.acao, alvo)
             logger.info(
                 f"[Ação Local] {diag.acao} em {alvo}: sucesso={resultado.sucesso} ({resultado.mensagem})"
             )
         else:
-            # Ação incide em dispositivo de campo -> envia comando via MQTT
             self._enviar_comando_mqtt(
                 device_id=alvo,
                 acao=diag.acao,
@@ -285,11 +337,15 @@ class AgenteBordaGateway:
         )
         topico = endereco.topico(TipoMensagem.COMANDO)
 
+        with self._lock:
+            self._seq_comandos += 1
+            seq = self._seq_comandos
+
         mensagem = MensagemComando(
             message_id=cmd_id,
             device_id=device_id,
             timestamp=datetime.now(timezone.utc),
-            sequence=1,
+            sequence=seq,
             boot_id=f"gw-{self.gateway_id}",
             acao=acao,
             expira_em=datetime.now(timezone.utc) + timedelta(minutes=1),
@@ -303,3 +359,65 @@ class AgenteBordaGateway:
         self.transporte.publicar(topico, payload_bytes, qos=1, retain=False)
         logger.info(f"[Comando MQTT Enviado] {acao} para {device_id} no tópico {topico}")
         return cmd_id
+
+    # -------------------------------------------------------------------------
+    # Sincronização Borda -> Nuvem (com Buffer Offline SQLite)
+    # -------------------------------------------------------------------------
+
+    def sincronizar_com_nuvem(self, cloud_url: str, timeout_s: float = 2.0) -> dict[str, Any]:
+        """Envia registros pendentes do SQLite local para a Nuvem e recebe decisões humanas."""
+        with self._lock:
+            if self.db is not None:
+                pendentes_db = self.db.obter_pendentes_sincronizacao(limite=100)
+                ids_db = [row["id"] for row in pendentes_db]
+                registros = [json.loads(row["detalhes_json"]) for row in pendentes_db]
+            else:
+                ids_db = []
+                registros = list(self.historico_acoes[self._cursor_sync_memoria :])
+
+            estados = dict(self.estado_dispositivos)
+            pendentes_aprov = [
+                {
+                    "approval_id": app_id,
+                    "alvo": diag.alvo,
+                    "falha": diag.falha,
+                    "acao": diag.acao,
+                    "timestamp": reg.get("timestamp"),
+                }
+                for app_id, (diag, reg) in self.aprovacoes_pendentes.items()
+            ]
+
+        corpo = json.dumps(
+            {
+                "gateway_id": self.gateway_id,
+                "tenant_id": self.tenant_id,
+                "site_id": self.site_id,
+                "dispositivos_estado": estados,
+                "registros": registros,
+                "pendentes_aprovacao": pendentes_aprov,
+            },
+            ensure_ascii=False,
+        ).encode("utf-8")
+
+        url = f"{cloud_url.rstrip('/')}/api/v1/sync"
+        req = urllib.request.Request(
+            url, data=corpo, headers={"Content-Type": "application/json"}, method="POST"
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+                dados = json.loads(resp.read().decode("utf-8"))
+        except (urllib.error.URLError, OSError, TimeoutError, ValueError) as e:
+            return {"conectado": False, "enviados": 0, "erro": str(e)}
+
+        with self._lock:
+            if self.db is not None and ids_db:
+                self.db.marcar_como_sincronizado(ids_db)
+            elif self.db is None:
+                self._cursor_sync_memoria += len(registros)
+
+        for dec in dados.get("decisoes_humanas", []):
+            app_id = dec.get("approval_id")
+            if app_id:
+                self.resolver_aprovacao_humana(app_id, bool(dec.get("aprovado", False)))
+
+        return {"conectado": True, "enviados": len(registros)}
