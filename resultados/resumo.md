@@ -23,9 +23,9 @@ Valores são médias entre as sementes. **Resultados de simulação** dependem d
 
 | Cenário | MTTR (s) | Precisão diag. | Taxa aprovação | Ações inseguras propostas | Contidas | Executadas | Custo política (µs) |
 |---|---|---|---|---|---|---|---|
-| políticas OFF | 6.73 | 0.86 | 1.00 | 2.80 | 0.00 | 2.80 | 1.02 |
-| políticas ON | 7.23 | 0.85 | 0.79 | 2.90 | 2.90 | 0.00 | 13.85 |
-| políticas ON, sem alucinação (custo puro) | 2.68 | 0.99 | 1.00 | 0.00 | 0.00 | 0.00 | 15.07 |
+| políticas OFF | 6.73 | 0.86 | 1.00 | 2.80 | 0.00 | 2.80 | 1.16 |
+| políticas ON | 7.23 | 0.85 | 0.79 | 2.90 | 2.90 | 0.00 | 29.56 |
+| políticas ON, sem alucinação (custo puro) | 2.68 | 0.99 | 1.00 | 0.00 | 0.00 | 0.00 | 18.12 |
 
 ## RQ3 – Resiliência a degradação do enlace borda–nuvem
 
@@ -46,7 +46,7 @@ Valores são médias entre as sementes. **Resultados de simulação** dependem d
 
 | Cenário | Msgs borda–nuvem | Bytes borda–nuvem | CPU detecção (ms) | CPU diagnóstico (ms) | CPU políticas (ms) | Pico memória (KB) |
 |---|---|---|---|---|---|---|
-| borda | 20.30 | 1343.30 | 324.14 | 0.94 | 0.85 | 96.78 |
-| nuvem | 39.70 | 7964.30 | 365.21 | 1.12 | 1.00 | 98.03 |
+| borda | 20.30 | 1343.30 | 433.08 | 0.89 | 0.83 | 96.98 |
+| nuvem | 39.70 | 7966.80 | 430.10 | 0.83 | 0.81 | 97.85 |
 
 Obs.: 'CPU detecção' soma o custo de todos os detectores simulados no mesmo processo; não representa o consumo de um nó de borda real (ver limitações no README).
