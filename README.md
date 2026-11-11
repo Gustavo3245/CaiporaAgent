@@ -6,17 +6,22 @@ Implementa os agentes **IoT Device**, **Edge Node** e **Cloud Coordinator**, o m
 
 ## Execução em Dispositivos Físicos e Edge Gateway Real
 
-O pacote [`agentes_ia/gateway`](agentes_ia/gateway/) implementa o **Edge Gateway Daemon** para execução em hardware físico (ex.: Raspberry Pi, mini-PCs Linux e microcontroladores ESP32):
+O pacote [`agentes_ia/gateway`](agentes_ia/gateway/) implementa o contínuo completo **IoT–Borda–Nuvem** para execução sem dependências externas (biblioteca padrão Python) ou integrado a Mosquitto/hardware físico (Raspberry Pi, mini-PCs Linux e microcontroladores ESP32):
 
 ```bash
-python -m agentes_ia.gateway.cli --modo demo           # demonstração interativa em malha fechada
-python -m agentes_ia.gateway.cli --modo gateway        # inicia o gateway conectado ao Mosquitto
-python -m agentes_ia.gateway.cli --modo dispositivo    # emula um dispositivo de campo (ESP32)
+python -m agentes_ia.gateway.cli --modo e2e            # execução real ponta a ponta (Broker + Nuvem + Gateway + IoT via TCP/HTTP)
+python -m agentes_ia.gateway.cli --modo broker         # inicia o Broker MQTT 3.1.1 TCP nativo (porta 1883)
+python -m agentes_ia.gateway.cli --modo nuvem          # inicia o Coordenador da Nuvem HTTP/Prometheus (porta 8080)
+python -m agentes_ia.gateway.cli --modo gateway --cloud-url http://127.0.0.1:8080 --dry-run
+python -m agentes_ia.gateway.cli --modo dispositivo    # emula um dispositivo de campo (ESP32) via MQTT TCP
+python -m agentes_ia.gateway.cli --modo demo           # demonstração rápida em memória no terminal
 ```
 
 - **Guia completo de implantação física:** [`docs/guia_hardware_real.md`](docs/guia_hardware_real.md)
 - **Firmware C++ para ESP32:** [`firmware_esp32/firmware_esp32.ino`](firmware_esp32/firmware_esp32.ino)
 - **Serviço de Inicialização Linux (systemd):** [`deploy/edge-gateway.service`](deploy/edge-gateway.service)
+- **Broker MQTT 3.1.1 e Transporte TCP:** [`agentes_ia/gateway/broker_mqtt.py`](agentes_ia/gateway/broker_mqtt.py) e [`agentes_ia/gateway/transporte.py`](agentes_ia/gateway/transporte.py)
+- **Coordenador da Nuvem e Aprovações HTTP:** [`agentes_ia/gateway/nuvem.py`](agentes_ia/gateway/nuvem.py) (`/api/v1/sync`, `/api/v1/status`, `/api/v1/aprovacoes`, `/metrics`)
 - **Banco de Auditoria e Buffer Offline:** [`agentes_ia/gateway/auditoria_db.py`](agentes_ia/gateway/auditoria_db.py) (SQLite)
 
 ## Como executar a simulação (Python ≥ 3.10, só biblioteca padrão)

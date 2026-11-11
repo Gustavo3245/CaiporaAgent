@@ -36,26 +36,44 @@ Este guia orienta o processo de montagem de bancada e implantação dos agentes 
 
 ---
 
-## 2. Configuração do Gateway de Borda (Raspberry Pi ou PC)
+## 2. Configuração da Nuvem e do Gateway de Borda (Raspberry Pi ou PC)
 
-### A. Subir o Broker MQTT (Mosquitto)
-Você pode rodar o broker nativamente ou via Docker:
+### A. Subir o Broker MQTT (Mosquitto ou Broker Nativo Python)
+Você pode rodar o broker via Docker, Mosquitto instalado no sistema, ou diretamente com o broker MQTT 3.1.1 embutido sem dependências externas:
 
-* **Opção 1: Via Docker Compose (Recomendado)**:
+* **Opção 1: Broker MQTT 3.1.1 Nativo em Python (Zero Dependências)**:
+  ```bash
+  PYTHONPATH=. python3 -m agentes_ia.gateway.cli --modo broker --host 0.0.0.0 --port 1883
+  ```
+* **Opção 2: Via Docker Compose**:
   ```bash
   docker compose up -d mosquitto
   ```
-* **Opção 2: Nativo no Linux**:
+* **Opção 3: Mosquitto Nativo no Linux**:
   ```bash
   sudo apt update && sudo apt install -y mosquitto mosquitto-clients
   sudo cp mosquitto.conf /etc/mosquitto/conf.d/edge.conf
   sudo systemctl restart mosquitto
   ```
 
-### B. Executar o Agente de Borda
-* **Execução em Primeiro Plano (para testes e depuração)**:
+### B. Subir o Coordenador da Nuvem (HTTP + Prometheus + Aprovações)
+```bash
+PYTHONPATH=. python3 -m agentes_ia.gateway.cli --modo nuvem --host 0.0.0.0 --cloud-port 8080
+```
+Endpoints expostos:
+- `POST /api/v1/sync`: recebe lotes de auditoria SQLite da borda e retorna decisões humanas.
+- `GET /api/v1/status`: estado consolidado dos gateways e dispositivos.
+- `GET/POST /api/v1/aprovacoes`: lista e aprova/rejeita ações condicionais (`restart_device`).
+- `GET /metrics`: métricas em formato Prometheus.
+
+### C. Executar o Agente de Borda
+* **Teste Completo Ponta a Ponta Automatizado (Broker + Nuvem + Gateway + IoT)**:
   ```bash
-  PYTHONPATH=. python3 -m agentes_ia.gateway.cli --modo gateway --tenant acme --site fabrica-01 --dry-run
+  PYTHONPATH=. python3 -m agentes_ia.gateway.cli --modo e2e
+  ```
+* **Execução em Primeiro Plano (conectado ao Broker e à Nuvem)**:
+  ```bash
+  PYTHONPATH=. python3 -m agentes_ia.gateway.cli --modo gateway --tenant acme --site fabrica-01 --cloud-url http://127.0.0.1:8080 --dry-run
   ```
 * **Instalação como Serviço Automático de Sistema (Produção)**:
   ```bash
