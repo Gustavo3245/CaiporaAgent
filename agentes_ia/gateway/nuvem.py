@@ -32,6 +32,7 @@ class CoordenadorNuvemServidor:
         self.gateways: dict[str, dict[str, Any]] = {}
         self.aprovacoes_pendentes: dict[str, dict[str, Any]] = {}
         self.decisoes_operador: dict[str, dict[str, bool]] = {}  # gateway_id -> {approval_id: bool}
+        self.aprovacoes_resolvidas: set[str] = set()
         self.sincronizacoes_totais = 0
 
     def registrar_sync(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -51,12 +52,16 @@ class CoordenadorNuvemServidor:
                 "ultima_sync_registros": len(registros),
             }
 
+            decisoes_para_gw = self.decisoes_operador.pop(gw_id, {})
             for pend in pendentes:
                 app_id = pend.get("approval_id")
-                if app_id:
+                if (
+                    app_id
+                    and app_id not in self.aprovacoes_resolvidas
+                    and app_id not in decisoes_para_gw
+                ):
                     self.aprovacoes_pendentes[app_id] = {**pend, "gateway_id": gw_id}
 
-            decisoes_para_gw = self.decisoes_operador.pop(gw_id, {})
             lista_decisoes = [
                 {"approval_id": app_id, "aprovado": aprov}
                 for app_id, aprov in decisoes_para_gw.items()
@@ -74,6 +79,7 @@ class CoordenadorNuvemServidor:
             pend = self.aprovacoes_pendentes.pop(approval_id, None)
             if pend is None:
                 return False
+            self.aprovacoes_resolvidas.add(approval_id)
             gw_id = pend.get("gateway_id", "edge1")
             self.decisoes_operador.setdefault(gw_id, {})[approval_id] = aprovado
             return True

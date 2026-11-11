@@ -309,6 +309,7 @@ class TestNuvemSyncEAprovacao(unittest.TestCase):
             # Próxima sync puxa aprovação e executa restart_device no dev1
             gw.sincronizar_com_nuvem(url)
             self.assertEqual(len(gw.aprovacoes_pendentes), 0)
+            self.assertEqual(nuvem.resumo_status()["aprovacoes_pendentes"], 0)
             self.assertEqual([c.acao for c in dev.comandos_recebidos], ["restart_device"])
             self.assertNotEqual(dev.boot_id, boot_original)
         finally:
