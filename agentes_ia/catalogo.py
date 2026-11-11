@@ -18,9 +18,11 @@ ACOES_ALTERNATIVAS = {"restart_device": {"cpu_saturation", "memory_overflow", "s
 # Quais falhas cada métrica pode evidenciar (usado na verificação de integridade)
 MAPA_METRICA_FALHA = {
     "cpu": ("cpu_saturation",),
+    "temp": ("cpu_saturation",),
     "mem": ("memory_overflow",),
     "pkt_loss": ("packet_loss",),
     "sensor_std": ("sensor_failure",),
+    "temperatura": ("sensor_failure", "cpu_saturation"),
     "svc_latency": ("service_degradation", "cpu_saturation", "memory_overflow"),
 }
 
@@ -34,9 +36,9 @@ METRICA_PRINCIPAL = {
 
 
 def camada_de(no: str) -> str:
-    if no.startswith("dev"):
+    if no.startswith(("dev", "esp32", "sensor")):
         return "iot"
-    if no.startswith("edge"):
+    if no.startswith(("edge", "gw")):
         return "borda"
     return "nuvem"
 

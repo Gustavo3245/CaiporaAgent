@@ -5,12 +5,12 @@
   "agentes": {
     "iot_device": {
       "acoes_permitidas": ["notificar_operador"],
-      "escopo": ["dev*"]
+      "escopo": ["dev*", "esp32*", "sensor*"]
     },
     "edge_agent": {
       "acoes_permitidas": ["throttle_workload", "clear_cache", "reroute_link", "reset_sensor",
                            "restart_service", "restart_device", "notificar_operador"],
-      "escopo": ["dev*", "edge*"]
+      "escopo": ["dev*", "esp32*", "sensor*", "edge*", "gw*"]
     },
     "cloud_coordinator": {
       "acoes_permitidas": ["throttle_workload", "clear_cache", "reroute_link", "reset_sensor",

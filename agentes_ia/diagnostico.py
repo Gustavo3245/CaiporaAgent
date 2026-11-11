@@ -14,8 +14,14 @@ from typing import Optional
 from .catalogo import (ACAO_POR_FALHA, METRICA_PRINCIPAL, PROIBIDAS,
                        categoria_da_falha)
 
-FALHA_POR_METRICA = {"sensor_std": "sensor_failure", "pkt_loss": "packet_loss",
-                     "cpu": "cpu_saturation", "mem": "memory_overflow"}
+FALHA_POR_METRICA = {
+    "sensor_std": "sensor_failure",
+    "temperatura": "sensor_failure",
+    "pkt_loss": "packet_loss",
+    "cpu": "cpu_saturation",
+    "temp": "cpu_saturation",
+    "mem": "memory_overflow",
+}
 
 
 @dataclass
@@ -44,12 +50,18 @@ class DiagnosticadorRegras:
         principais = [a for a in anomalias if a["metrica"] != "svc_latency"]
         if principais:
             topo = max(principais, key=lambda a: abs(a["z"]))
-            falha = FALHA_POR_METRICA[topo["metrica"]]
+            falha = FALHA_POR_METRICA.get(topo["metrica"])
+            if falha is None:
+                falha = "sensor_failure"
+                acao = "notificar_operador"
+            else:
+                acao = ACAO_POR_FALHA[falha]
         else:
             topo, falha = anomalias[0], "service_degradation"
+            acao = ACAO_POR_FALHA[falha]
         conf = 0.95 if abs(topo["z"]) >= 8 else 0.8
         d = Diagnostico(no, falha, no, categoria_da_falha(falha, no), evid, conf,
-                        ACAO_POR_FALHA[falha], "regras")
+                        acao, "regras")
         d.tempo_ms = (time.perf_counter() - t0) * 1000
         return d
 

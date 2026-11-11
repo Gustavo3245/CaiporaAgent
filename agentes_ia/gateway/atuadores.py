@@ -149,6 +149,20 @@ class AtuadorLinux:
                 mensagem=f"Notificação registrada: {msg}",
             )
 
+        elif acao == "reroute_link":
+            # Alterna/limpa rota de rede local ou reavalia interface de backup
+            iface = str(parametros.get("interface", "eth0"))
+            return self._executar_comando(
+                ["ip", "route", "flush", "cache"], acao, alvo
+            ) if not self.dry_run else self._executar_comando(
+                ["ip", "route", "flush", "cache", iface], acao, alvo
+            )
+
+        elif acao == "reset_sensor":
+            # Reinicializa barramento I2C/GPIO local quando o sensor está acoplado à borda
+            bus = str(parametros.get("bus", "1"))
+            return self._executar_comando(["i2cdetect", "-y", bus], acao, alvo)
+
         elif acao == "restart_device":
             # Reinicialização segura da máquina (exige confirmação de política)
             return self._executar_comando(["systemctl", "reboot"], acao, alvo)

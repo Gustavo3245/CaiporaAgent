@@ -1,11 +1,12 @@
 /*
  * Firmware ESP32 para Dispositivo de Campo IoT
  *
- * Implementa o contrato MQTT v1.0:
- *  - Configuração de Last Will and Testament (LWT) no tópico 'state'
- *  - Envio periódico de telemetria com sequence e boot_id
+ * Implementa estritamente o contrato MQTT v1.0 (docs/protocolo_mqtt.md):
+ *  - Sincronização NTP para timestamps ISO 8601 UTC (com fallback relativo ao boot)
+ *  - Configuração de Last Will and Testament (LWT) válido no tópico 'state'
+ *  - Envio periódico de telemetria com message_id (UUIDv4), timestamp, sequence e boot_id
  *  - Recepção de comandos (ex: reset_sensor, restart_device)
- *  - Publicação de confirmação em 'command-result'
+ *  - Publicação de confirmação completa em 'command-result'
  *
  * Bibliotecas necessárias (no Arduino IDE ou PlatformIO):
  *  - PubSubClient (por Nick O'Leary)
@@ -15,6 +16,7 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
+#include <time.h>
 
 // ============================================================================
 // CONFIGURAÇÕES DE REDE E MQTT
@@ -51,7 +53,7 @@ unsigned long ultimoEnvioTelemetria = 0;
 const unsigned long INTERVALO_TELEMETRIA_MS = 1000;
 
 // ============================================================================
-// GERAÇÃO DE UUID V4 SIMPLIFICADO PARA O ENVELOPE
+// GERAÇÃO DE UUID V4 E TIMESTAMP ISO 8601 UTC PARA O ENVELOPE
 // ============================================================================
 void gerarUUID(char* buffer) {
   uint32_t r1 = esp_random();
@@ -65,6 +67,33 @@ void gerarUUID(char* buffer) {
           0x8000 | ((r3 >> 16) & 0x3FFF),
           r3 & 0xFFFF,
           r4);
+}
+
+void obterTimestampISO(char* buffer, size_t tamanho) {
+  struct tm timeinfo;
+  if (getLocalTime(&timeinfo, 50) && timeinfo.tm_year > (2020 - 1900)) {
+    strftime(buffer, tamanho, "%Y-%m-%dT%H:%M:%SZ", &timeinfo);
+  } else {
+    // Fallback UTC determinístico relativo ao tempo de atividade caso NTP ainda não tenha sincronizado
+    unsigned long seg = millis() / 1000;
+    snprintf(buffer, tamanho, "1970-01-01T%02lu:%02lu:%02luZ",
+             (seg / 3600) % 24, (seg / 60) % 60, seg % 60);
+  }
+}
+
+void preencherEnvelope(JsonDocument& doc, const char* tipoMensagem) {
+  char msgId[40];
+  char ts[32];
+  gerarUUID(msgId);
+  obterTimestampISO(ts, sizeof(ts));
+
+  doc["schema_version"] = "1.0";
+  doc["message_type"]   = tipoMensagem;
+  doc["message_id"]     = msgId;
+  doc["device_id"]      = DEVICE_ID;
+  doc["timestamp"]      = ts;
+  doc["sequence"]       = ++sequence;
+  doc["boot_id"]        = bootId;
 }
 
 // ============================================================================
@@ -82,15 +111,7 @@ void configurarTopicos() {
 // ============================================================================
 void publicarEstado(const char* status) {
   StaticJsonDocument<512> doc;
-  char msgId[40];
-  gerarUUID(msgId);
-
-  doc["schema_version"] = "1.0";
-  doc["message_type"]   = "state";
-  doc["message_id"]     = msgId;
-  doc["device_id"]      = DEVICE_ID;
-  doc["sequence"]       = ++sequence;
-  doc["boot_id"]        = bootId;
+  preencherEnvelope(doc, "state");
 
   JsonObject payload = doc.createNestedObject("payload");
   payload["status"]           = status;
@@ -110,23 +131,16 @@ void publicarEstado(const char* status) {
 // PUBLICAÇÃO DE TELEMETRIA
 // ============================================================================
 void enviarTelemetria() {
-  StaticJsonDocument<512> doc;
-  char msgId[40];
-  gerarUUID(msgId);
-
-  doc["schema_version"] = "1.0";
-  doc["message_type"]   = "telemetry";
-  doc["message_id"]     = msgId;
-  doc["device_id"]      = DEVICE_ID;
-  doc["sequence"]       = ++sequence;
-  doc["boot_id"]        = bootId;
+  StaticJsonDocument<640> doc;
+  preencherEnvelope(doc, "telemetry");
 
   JsonObject payload = doc.createNestedObject("payload");
+  payload["sample_interval_ms"] = INTERVALO_TELEMETRIA_MS;
   JsonArray metrics = payload.createNestedArray("metrics");
 
-  // Exemplo de leitura real de sensor (ou ADC no pino 34)
+  // Exemplo de leitura real de sensor (ADC no pino 34)
   float leituraSensor = (analogRead(34) / 4095.0) * 100.0;
-  float desvioPadrao  = 0.5; // Calculado localmente ou simulado
+  float desvioPadrao  = 0.5; // Substituir pelo cálculo em janela móvel local
 
   JsonObject m1 = metrics.createNestedObject();
   m1["name"]    = "sensor_std";
@@ -140,7 +154,7 @@ void enviarTelemetria() {
   m2["unit"]    = "Cel";
   m2["quality"] = "good";
 
-  char buffer[512];
+  char buffer[640];
   serializeJson(doc, buffer);
   client.publish(topicoTelemetria, buffer, false); // QoS 0, retain = false
 }
@@ -160,23 +174,22 @@ void processarComando(char* topic, byte* payload, unsigned int length) {
 
   const char* cmdId = doc["message_id"];
   const char* acao  = doc["payload"]["action"];
+  if (!cmdId || !acao) {
+    return;
+  }
 
   Serial.printf("[COMANDO RECEBIDO] ID: %s | Ação: %s\n", cmdId, acao);
 
-  StaticJsonDocument<512> res;
-  char resMsgId[40];
-  gerarUUID(resMsgId);
+  char tsInicio[32];
+  obterTimestampISO(tsInicio, sizeof(tsInicio));
 
-  res["schema_version"] = "1.0";
-  res["message_type"]   = "command-result";
-  res["message_id"]     = resMsgId;
-  res["device_id"]      = DEVICE_ID;
-  res["sequence"]       = ++sequence;
-  res["boot_id"]        = bootId;
+  StaticJsonDocument<640> res;
+  preencherEnvelope(res, "command-result");
   res["correlation_id"] = cmdId;
 
   JsonObject resPayload = res.createNestedObject("payload");
   resPayload["command_id"] = cmdId;
+  resPayload["started_at"] = tsInicio;
 
   if (strcmp(acao, "reset_sensor") == 0) {
     // Ação física: desliga e liga o pino de alimentação do sensor por 200ms
@@ -184,13 +197,24 @@ void processarComando(char* topic, byte* payload, unsigned int length) {
     delay(200);
     digitalWrite(PINO_ALIMENTACAO_SENSOR, HIGH);
 
-    resPayload["status"] = "succeeded";
+    char tsFim[32];
+    obterTimestampISO(tsFim, sizeof(tsFim));
+    resPayload["completed_at"] = tsFim;
+    resPayload["status"]       = "succeeded";
+
     JsonObject resultData = resPayload.createNestedObject("result");
     resultData["sensor_resetado"] = true;
   }
   else if (strcmp(acao, "restart_device") == 0) {
-    resPayload["status"] = "succeeded";
-    char buffer[512];
+    char tsFim[32];
+    obterTimestampISO(tsFim, sizeof(tsFim));
+    resPayload["completed_at"] = tsFim;
+    resPayload["status"]       = "succeeded";
+
+    JsonObject resultData = resPayload.createNestedObject("result");
+    resultData["reiniciando"] = true;
+
+    char buffer[640];
     serializeJson(res, buffer);
     client.publish(topicoResultadoComando, buffer, false);
     delay(500);
@@ -198,17 +222,21 @@ void processarComando(char* topic, byte* payload, unsigned int length) {
     return;
   }
   else {
-    resPayload["status"] = "rejected";
+    char tsFim[32];
+    obterTimestampISO(tsFim, sizeof(tsFim));
+    resPayload["completed_at"]  = tsFim;
+    resPayload["status"]        = "rejected";
+    resPayload["error_code"]    = "unsupported_action";
     resPayload["error_message"] = "Acao nao suportada pelo hardware";
   }
 
-  char buffer[512];
+  char buffer[640];
   serializeJson(res, buffer);
   client.publish(topicoResultadoComando, buffer, false);
 }
 
 // ============================================================================
-// CONEXÃO WI-FI E MQTT COM LWT
+// CONEXÃO WI-FI E MQTT COM LWT CONFORME CONTRATO v1.0
 // ============================================================================
 void conectarWiFi() {
   Serial.print("Conectando ao Wi-Fi: ");
@@ -222,21 +250,35 @@ void conectarWiFi() {
   Serial.println("\nWi-Fi Conectado!");
   Serial.print("IP do ESP32: ");
   Serial.println(WiFi.localIP());
+
+  // Inicia sincronização NTP (UTC) para timestamps válidos no contrato
+  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
 }
 
 void reconectarMQTT() {
   while (!client.connected()) {
     Serial.print("Tentando conectar ao broker MQTT no Gateway... ");
 
-    // Mensagem de Last Will and Testament (LWT) caso o ESP32 perca energia ou sinal
-    StaticJsonDocument<256> lwtDoc;
+    // Mensagem de Last Will and Testament (LWT) completa e válida pelo codec.py
+    StaticJsonDocument<512> lwtDoc;
+    char lwtMsgId[40];
+    char lwtTs[32];
+    gerarUUID(lwtMsgId);
+    obterTimestampISO(lwtTs, sizeof(lwtTs));
+
     lwtDoc["schema_version"] = "1.0";
     lwtDoc["message_type"]   = "state";
+    lwtDoc["message_id"]     = lwtMsgId;
     lwtDoc["device_id"]      = DEVICE_ID;
-    JsonObject lwtPayload    = lwtDoc.createNestedObject("payload");
-    lwtPayload["status"]     = "offline";
+    lwtDoc["timestamp"]      = lwtTs;
+    lwtDoc["sequence"]       = 0;
+    lwtDoc["boot_id"]        = bootId;
 
-    char lwtBuffer[256];
+    JsonObject lwtPayload = lwtDoc.createNestedObject("payload");
+    lwtPayload["status"]  = "offline";
+    lwtPayload["reason"]  = "lwt_unexpected_disconnect";
+
+    char lwtBuffer[512];
     serializeJson(lwtDoc, lwtBuffer);
 
     // Conecta com LWT configurado no tópico state (retain=true, QoS=1)
