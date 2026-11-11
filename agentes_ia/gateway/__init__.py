@@ -6,8 +6,10 @@ from .transporte import (
     TransporteMQTT,
     TransporteMemoria,
     TransportePaho,
+    TransporteTCP,
     topico_corresponde,
 )
+from .broker_mqtt import BrokerMQTTLocal
 from .agente import AgenteBordaGateway
 from .dispositivo_campo import DispositivoCampoIoT
 from .auditoria_db import AuditoriaSQLite
@@ -21,6 +23,8 @@ __all__ = [
     "TransporteMQTT",
     "TransporteMemoria",
     "TransportePaho",
+    "TransporteTCP",
+    "BrokerMQTTLocal",
     "topico_corresponde",
     "AgenteBordaGateway",
     "DispositivoCampoIoT",

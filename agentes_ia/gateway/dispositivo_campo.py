@@ -64,10 +64,25 @@ class DispositivoCampoIoT:
         # Estado interno de simulação de hardware
         self.falha_ativa: str | None = None
         self.comandos_recebidos: list[MensagemComando] = []
+        self._comandos_processados: set[str] = set()
+
+    def _configurar_lwt(self) -> None:
+        topico_estado = self.endereco.topico(TipoMensagem.ESTADO)
+        msg_lwt = MensagemEstado(
+            message_id=str(uuid.uuid4()),
+            device_id=self.device_id,
+            timestamp=datetime.now(timezone.utc),
+            sequence=0,
+            boot_id=self.boot_id,
+            status=EstadoDispositivo.OFFLINE,
+            motivo="lwt_desconexao_abrupta",
+        )
+        self.transporte.configurar_lwt(topico_estado, msg_lwt.para_bytes(), qos=1, retain=True)
 
     def iniciar(self) -> None:
-        """Conecta ao broker, assina comandos e publica estado online."""
+        """Configura LWT, conecta ao broker, assina comandos e publica estado online."""
         if not self.transporte.esta_conectado():
+            self._configurar_lwt()
             self.transporte.conectar()
 
         # Registra callback de recebimento de comandos
@@ -115,6 +130,7 @@ class DispositivoCampoIoT:
             "sensor_std": 0.5,
             "cpu": 30.0,
             "mem": 40.0,
+            "pkt_loss": 0.5,
         }
 
         # Aplica falha ativa se houver
@@ -122,6 +138,10 @@ class DispositivoCampoIoT:
             metricas_dict["sensor_std"] = 0.001  # Sensor travou em valor fixo
         elif self.falha_ativa == "cpu_saturation":
             metricas_dict["cpu"] = 98.5
+        elif self.falha_ativa == "memory_overflow":
+            metricas_dict["mem"] = 97.5
+        elif self.falha_ativa == "packet_loss":
+            metricas_dict["pkt_loss"] = 45.0
 
         # Permite override manual para testes
         if valores_customizados:
@@ -169,6 +189,11 @@ class DispositivoCampoIoT:
             logger.warning(f"Comando ignorado: destinado a {mensagem.device_id}")
             return
 
+        if mensagem.message_id in self._comandos_processados:
+            logger.info(f"Comando duplicado ignorado (idempotência): {mensagem.message_id}")
+            return
+        self._comandos_processados.add(mensagem.message_id)
+
         self.comandos_recebidos.append(mensagem)
         self._executar_comando(mensagem)
 
@@ -199,11 +224,17 @@ class DispositivoCampoIoT:
         logger.info(f"Executando ação solicitada pelo Gateway: {cmd.acao}")
         t_inicio = agora
 
-        if cmd.acao == "reset_sensor":
-            # Cura a falha de sensor travado
-            if self.falha_ativa == "sensor_failure":
+        mapa_cura = {
+            "reset_sensor": "sensor_failure",
+            "throttle_workload": "cpu_saturation",
+            "clear_cache": "memory_overflow",
+            "reroute_link": "packet_loss",
+        }
+
+        if cmd.acao in mapa_cura:
+            if self.falha_ativa == mapa_cura[cmd.acao]:
                 self.falha_ativa = None
-            resultado = {"sensor_reiniciado": True, "status": "ok"}
+            resultado = {"acao_executada": cmd.acao, "status": "ok"}
             status = StatusComando.SUCESSO
         elif cmd.acao == "restart_device":
             # Reinicialização: novo boot_id, sequência zerada

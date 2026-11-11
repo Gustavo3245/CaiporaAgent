@@ -1,5 +1,6 @@
 """Testes automatizados da camada de Gateway de Borda e Dispositivos de Campo."""
 
+import time
 import unittest
 from datetime import datetime, timezone
 
@@ -7,9 +8,11 @@ from agentes_ia.config import carregar_politicas
 from agentes_ia.gateway import (
     AgenteBordaGateway,
     AuditoriaSQLite,
+    BrokerMQTTLocal,
     DispositivoCampoIoT,
     ResultadoAtuacao,
     TransporteMemoria,
+    TransporteTCP,
     coletar_metricas_sistema,
     executar_acao_local,
     topico_corresponde,
@@ -142,6 +145,69 @@ class TestAuditoriaSQLite(unittest.TestCase):
         self.db.marcar_como_sincronizado([id_inserido])
         self.assertEqual(self.db.contar_pendentes(), 0)
         self.assertEqual(len(self.db.obter_pendentes_sincronizacao()), 0)
+
+
+class TestBrokerTCPeLWT(unittest.TestCase):
+    def setUp(self):
+        self.broker = BrokerMQTTLocal(host="127.0.0.1", port=0)
+        self.porta = self.broker.iniciar()
+        self.t_gw = TransporteTCP(host="127.0.0.1", port=self.porta, client_id="edge1", keepalive=10)
+        self.motor = MotorPoliticas(carregar_politicas(), ativo=True)
+        self.gw = AgenteBordaGateway(
+            tenant_id="acme",
+            site_id="fabrica-01",
+            gateway_id="edge1",
+            transporte=self.t_gw,
+            motor_politicas=self.motor,
+            dry_run=True,
+            cooldown_s=0.3,
+        )
+        self.gw.iniciar()
+
+        self.t_dev = TransporteTCP(
+            host="127.0.0.1", port=self.porta, client_id="esp32-sensor-01", keepalive=5
+        )
+        self.dev = DispositivoCampoIoT(
+            tenant_id="acme",
+            site_id="fabrica-01",
+            device_id="esp32-sensor-01",
+            transporte=self.t_dev,
+        )
+        self.dev.iniciar()
+        time.sleep(0.05)
+
+    def tearDown(self):
+        self.t_dev.desconectar()
+        self.gw.parar()
+        self.broker.parar()
+
+    def test_autocura_e_lwt_por_tcp_real(self):
+        # Aquecimento via TCP MQTT
+        for _ in range(12):
+            self.dev.enviar_telemetria()
+            time.sleep(0.005)
+
+        # Injeta sobrecarga de CPU no dispositivo esp32-sensor-01
+        self.dev.injetar_falha("cpu_saturation")
+        for _ in range(3):
+            self.dev.enviar_telemetria()
+            time.sleep(0.02)
+
+        # Aguarda entrega assíncrona via socket TCP
+        deadline = time.time() + 2.0
+        while self.dev.falha_ativa is not None and time.time() < deadline:
+            time.sleep(0.02)
+
+        self.assertIsNone(self.dev.falha_ativa)
+        self.assertEqual([c.acao for c in self.dev.comandos_recebidos], ["throttle_workload"])
+
+        # Simula perda de energia / desconexão abrupta e verifica disparo de LWT
+        self.t_dev.forcar_queda_abrupta()
+        deadline = time.time() + 2.0
+        while self.broker.lwt_disparados == 0 and time.time() < deadline:
+            time.sleep(0.02)
+
+        self.assertEqual(self.broker.lwt_disparados, 1)
 
 
 if __name__ == "__main__":
